@@ -1,42 +1,22 @@
-// Cargo.toml dependencies:
-/*
-[package]
-name = "db-controller"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-ratatui = "0.28"
-crossterm = "0.28"
-tokio = { version = "1.40", features = ["full"] }
-anyhow = "1.0"
-chrono = "0.4"
-sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "postgres", "chrono"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-dotenv = "0.15"
-*/
-
 use anyhow::{Context, Result};
 use chrono::{DateTime, Local};
 use crossterm::{
     event::{self, DisableMouseCapture, Event, KeyCode},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use dotenv::dotenv;
 use ratatui::{
+    Frame, Terminal,
     backend::{Backend, CrosstermBackend},
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Tabs, Wrap},
-    Frame, Terminal,
 };
-use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
+use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
 use std::{
-    env,
-    io,
+    env, io,
     os::unix::process::ExitStatusExt,
     process::Command,
     sync::{Arc, Mutex},
@@ -134,8 +114,7 @@ impl Config {
                 .unwrap_or_else(|_| "5050".to_string())
                 .parse()
                 .unwrap_or(5050),
-            network_name: env::var("NETWORK_NAME")
-                .unwrap_or_else(|_| "av_network_dev".to_string()),
+            network_name: env::var("NETWORK_NAME").unwrap_or_else(|_| "av_network_dev".to_string()),
             compose_service: env::var("COMPOSE_SERVICE")
                 .unwrap_or_else(|_| "av_timescaledb".to_string()),
             volume_prefix: env::var("VOLUME_PREFIX").unwrap_or_else(|_| "av_".to_string()),
@@ -419,8 +398,9 @@ impl App {
 
         // Update database status
         let db_status = if let Some(pool) = &self.db_pool {
-            self.fetch_db_status(pool).await.unwrap_or_else(|_| {
-                DatabaseStatus {
+            self.fetch_db_status(pool)
+                .await
+                .unwrap_or_else(|_| DatabaseStatus {
                     connected: false,
                     connection_count: 0,
                     database_size: "Disconnected".to_string(),
@@ -428,13 +408,14 @@ impl App {
                     last_check: Local::now(),
                     version: "Unknown".to_string(),
                     uptime: "Unknown".to_string(),
-                }
-            })
+                })
         } else {
             // Try to reconnect
             if let Ok(pool) = Self::try_connect_db().await {
-                let status = self.fetch_db_status(&pool).await.unwrap_or_else(|_| {
-                    DatabaseStatus {
+                let status = self
+                    .fetch_db_status(&pool)
+                    .await
+                    .unwrap_or_else(|_| DatabaseStatus {
                         connected: false,
                         connection_count: 0,
                         database_size: "Error".to_string(),
@@ -442,8 +423,7 @@ impl App {
                         last_check: Local::now(),
                         version: "Unknown".to_string(),
                         uptime: "Unknown".to_string(),
-                    }
-                });
+                    });
                 self.db_pool = Some(pool);
                 status
             } else {
@@ -631,7 +611,9 @@ impl App {
 
                 // Delete volumes
                 for volume in &["av_archive_dev", "av_pgadmin_dev", "av_pg_data_dev"] {
-                    let vol_result = Command::new("docker").args(&["volume", "rm", volume]).output();
+                    let vol_result = Command::new("docker")
+                        .args(&["volume", "rm", volume])
+                        .output();
                     if let Ok(output) = vol_result {
                         outputs.push(String::from_utf8_lossy(&output.stdout).to_string());
                         success = success && output.status.success();
@@ -876,7 +858,7 @@ impl App {
                             "Creating output directory...".to_string(),
                         ))
                         .await;
-                    std::fs::create_dir_all(&output_dir).ok();
+                    tokio::fs::create_dir_all(&output_dir).await.ok();
                     tokio::time::sleep(Duration::from_millis(300)).await;
 
                     let _ = tx
@@ -884,13 +866,15 @@ impl App {
                             "Cleaning previous documentation...".to_string(),
                         ))
                         .await;
-                    if let Ok(entries) = std::fs::read_dir(&output_dir) {
-                        for entry in entries.flatten() {
+
+                    // Use async file operations
+                    if let Ok(mut entries) = tokio::fs::read_dir(&output_dir).await {
+                        while let Ok(Some(entry)) = entries.next_entry().await {
                             if let Ok(path) = entry.path().canonicalize() {
                                 if path.is_file() {
-                                    std::fs::remove_file(path).ok();
+                                    tokio::fs::remove_file(path).await.ok();
                                 } else if path.is_dir() {
-                                    std::fs::remove_dir_all(path).ok();
+                                    tokio::fs::remove_dir_all(path).await.ok();
                                 }
                             }
                         }
@@ -910,8 +894,8 @@ impl App {
                         ))
                         .await;
 
-                    // Execute SchemaSpy
-                    let result = Command::new("java")
+                    // Execute SchemaSpy using tokio::process for async execution
+                    let mut child = tokio::process::Command::new("java")
                         .args(&[
                             "-jar",
                             &schemaspy_jar,
@@ -932,35 +916,64 @@ impl App {
                             "-o",
                             &output_dir,
                         ])
-                        .output();
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .spawn();
 
-                    match result {
-                        Ok(output) if output.status.success() => {
-                            let _ = tx
-                                .send(ActionProgress::Update(
-                                    "Generating HTML pages...".to_string(),
-                                ))
-                                .await;
-                            tokio::time::sleep(Duration::from_millis(500)).await;
-                            let _ = tx
-                                .send(ActionProgress::Completed(
-                                    "Documentation generated successfully!".to_string(),
-                                ))
-                                .await;
-                        }
-                        Ok(output) => {
-                            let error = String::from_utf8_lossy(&output.stderr);
-                            let _ = tx
-                                .send(ActionProgress::Failed(format!(
-                                    "Documentation generation failed: {}",
-                                    error
-                                )))
-                                .await;
+                    match child {
+                        Ok(mut process) => {
+                            // Poll the process while sending progress updates
+                            let mut elapsed = 0;
+                            loop {
+                                tokio::select! {
+                                    status = process.wait() => {
+                                        match status {
+                                            Ok(exit_status) if exit_status.success() => {
+                                                let _ = tx
+                                                    .send(ActionProgress::Update(
+                                                        "Generating HTML pages...".to_string(),
+                                                    ))
+                                                    .await;
+                                                tokio::time::sleep(Duration::from_millis(500)).await;
+                                                let _ = tx
+                                                    .send(ActionProgress::Completed(
+                                                        "Documentation generated successfully!".to_string(),
+                                                    ))
+                                                    .await;
+                                            }
+                                            Ok(_) => {
+                                                let _ = tx
+                                                    .send(ActionProgress::Failed(
+                                                        "Documentation generation failed. Check database connection and credentials.".to_string()
+                                                    ))
+                                                    .await;
+                                            }
+                                            Err(e) => {
+                                                let _ = tx
+                                                    .send(ActionProgress::Failed(format!(
+                                                        "Failed to run SchemaSpy: {}",
+                                                        e
+                                                    )))
+                                                    .await;
+                                            }
+                                        }
+                                        break;
+                                    }
+                                    _ = tokio::time::sleep(Duration::from_secs(2)) => {
+                                        elapsed += 2;
+                                        let _ = tx
+                                            .send(ActionProgress::Update(
+                                                format!("Still analyzing... ({} seconds elapsed)", elapsed),
+                                            ))
+                                            .await;
+                                    }
+                                }
+                            }
                         }
                         Err(e) => {
                             let _ = tx
                                 .send(ActionProgress::Failed(format!(
-                                    "Failed to run SchemaSpy: {}",
+                                    "Failed to start SchemaSpy: {}",
                                     e
                                 )))
                                 .await;
@@ -968,34 +981,49 @@ impl App {
                     }
                 }
                 _ => {
-                    // For other actions, execute normally
+                    // For other actions, execute using async commands
                     let _ = tx
                         .send(ActionProgress::Update("Executing command...".to_string()))
                         .await;
 
                     let result = match action {
-                        ActionType::StartServices => Command::new("sh")
-                            .args(&["-c", &format!("{} up -d", config.docker_compose_command)])
-                            .output(),
-                        ActionType::StopServices => Command::new("sh")
-                            .args(&["-c", &format!("{} down", config.docker_compose_command)])
-                            .output(),
-                        ActionType::CleanAll => Command::new("sh")
-                            .args(&["-c", &format!("{} down -v", config.docker_compose_command)])
-                            .output(),
+                        ActionType::StartServices => {
+                            tokio::process::Command::new("sh")
+                                .args(&["-c", &format!("{} up -d", config.docker_compose_command)])
+                                .output()
+                                .await
+                        }
+                        ActionType::StopServices => {
+                            tokio::process::Command::new("sh")
+                                .args(&["-c", &format!("{} down", config.docker_compose_command)])
+                                .output()
+                                .await
+                        }
+                        ActionType::CleanAll => {
+                            tokio::process::Command::new("sh")
+                                .args(&[
+                                    "-c",
+                                    &format!("{} down -v", config.docker_compose_command),
+                                ])
+                                .output()
+                                .await
+                        }
                         ActionType::DeleteVolumes => {
                             // Delete volumes and network
                             let mut success = true;
                             for volume in &["av_archive_dev", "av_pgadmin_dev", "av_pg_data_dev"] {
-                                if let Ok(output) =
-                                    Command::new("docker").args(&["volume", "rm", volume]).output()
+                                if let Ok(output) = tokio::process::Command::new("docker")
+                                    .args(&["volume", "rm", volume])
+                                    .output()
+                                    .await
                                 {
                                     success = success && output.status.success();
                                 }
                             }
-                            Command::new("docker")
+                            tokio::process::Command::new("docker")
                                 .args(&["network", "rm", "-f", &config.network_name])
                                 .output()
+                                .await
                                 .ok();
 
                             Ok(std::process::Output {
@@ -1017,7 +1045,11 @@ impl App {
                             let browsers = vec!["xdg-open", "google-chrome", "firefox", "chromium"];
                             let mut success = false;
                             for browser in browsers {
-                                if Command::new(browser).arg(&index_file).spawn().is_ok() {
+                                if tokio::process::Command::new(browser)
+                                    .arg(&index_file)
+                                    .spawn()
+                                    .is_ok()
+                                {
                                     success = true;
                                     break;
                                 }
@@ -1120,8 +1152,7 @@ fn ui(f: &mut Frame, app: &App) {
     let footer_content = if state.is_loading {
         // Show loading indicator in footer when processing
         let spinner_frames = vec!["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        let frame_index =
-            (Local::now().timestamp_millis() / 100) as usize % spinner_frames.len();
+        let frame_index = (Local::now().timestamp_millis() / 100) as usize % spinner_frames.len();
         let spinner = spinner_frames[frame_index];
 
         Line::from(vec![
@@ -1318,8 +1349,11 @@ fn render_status_tab(f: &mut Frame, area: Rect, state: &AppState) {
         ]),
     ];
 
-    let port_status =
-        Paragraph::new(port_items).block(Block::default().title(" Port Status ").borders(Borders::ALL));
+    let port_status = Paragraph::new(port_items).block(
+        Block::default()
+            .title(" Port Status ")
+            .borders(Borders::ALL),
+    );
 
     f.render_widget(port_status, left_chunks[2]);
 
@@ -1348,10 +1382,7 @@ fn render_actions_tab(f: &mut Frame, area: Rect, state: &AppState) {
             "Start PostgreSQL and PgAdmin containers",
         ),
         ("↓ Stop Services", "Stop all running containers"),
-        (
-            "🧹 Clean All",
-            "Remove containers, networks, and volumes",
-        ),
+        ("🧹 Clean All", "Remove containers, networks, and volumes"),
         ("🗑️  Delete Volumes", "Delete all persistent volumes"),
         (
             "📚 Generate Docs",
@@ -1470,17 +1501,17 @@ fn render_history_tab(f: &mut Frame, area: Rect, state: &AppState) {
             Constraint::Length(10),
         ],
     )
-        .header(header)
-        .block(
-            Block::default()
-                .title(" Action History ")
-                .borders(Borders::ALL),
-        )
-        .widths(&[
-            Constraint::Length(10),
-            Constraint::Min(20),
-            Constraint::Length(10),
-        ]);
+    .header(header)
+    .block(
+        Block::default()
+            .title(" Action History ")
+            .borders(Borders::ALL),
+    )
+    .widths(&[
+        Constraint::Length(10),
+        Constraint::Min(20),
+        Constraint::Length(10),
+    ]);
 
     f.render_widget(table, area);
 }
@@ -1609,7 +1640,9 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 async fn main() -> Result<()> {
     // Load configuration from environment
     let config = Config::from_env()?;
-    CONFIG.set(config.clone()).expect("Failed to set global config");
+    CONFIG
+        .set(config.clone())
+        .expect("Failed to set global config");
 
     // Create a sample .env file if it doesn't exist
     if !std::path::Path::new(".env").exists() {
@@ -1630,7 +1663,10 @@ async fn main() -> Result<()> {
 
     // Create app
     let mut app = App::new().await?;
-    app.add_log(LogLevel::Info, "Database Controller TUI started".to_string());
+    app.add_log(
+        LogLevel::Info,
+        "Database Controller TUI started".to_string(),
+    );
     app.add_log(
         LogLevel::Info,
         format!(
@@ -1778,11 +1814,14 @@ async fn run_app<B: Backend>(
                                         ActionType::CleanAll => {
                                             "Cleaning all containers and volumes..."
                                         }
-                                        ActionType::DeleteVolumes => "Deleting volumes and networks...",
+                                        ActionType::DeleteVolumes => {
+                                            "Deleting volumes and networks..."
+                                        }
                                         ActionType::ViewDocs => "Opening documentation...",
                                     };
 
-                                    state.show_popup = Some(PopupType::Loading(loading_msg.to_string()));
+                                    state.show_popup =
+                                        Some(PopupType::Loading(loading_msg.to_string()));
                                     state.is_loading = true;
                                     state.loading_message = loading_msg.to_string();
                                     drop(state);
@@ -1937,34 +1976,68 @@ async fn run_app<B: Backend>(
                                     );
 
                                     let terminal_opened = Command::new("gnome-terminal")
-                                        .args(&["--title", "Docker Logs", "--", "bash", "-c", &script])
-                                        .spawn()
-                                        .is_ok()
-                                        || Command::new("konsole")
-                                        .args(&["--title", "Docker Logs", "-e", "bash", "-c", &script])
-                                        .spawn()
-                                        .is_ok()
-                                        || Command::new("xfce4-terminal")
                                         .args(&[
                                             "--title",
                                             "Docker Logs",
-                                            "-e",
-                                            &format!("bash -c '{}'", script),
+                                            "--",
+                                            "bash",
+                                            "-c",
+                                            &script,
                                         ])
                                         .spawn()
                                         .is_ok()
+                                        || Command::new("konsole")
+                                            .args(&[
+                                                "--title",
+                                                "Docker Logs",
+                                                "-e",
+                                                "bash",
+                                                "-c",
+                                                &script,
+                                            ])
+                                            .spawn()
+                                            .is_ok()
+                                        || Command::new("xfce4-terminal")
+                                            .args(&[
+                                                "--title",
+                                                "Docker Logs",
+                                                "-e",
+                                                &format!("bash -c '{}'", script),
+                                            ])
+                                            .spawn()
+                                            .is_ok()
                                         || Command::new("xterm")
-                                        .args(&["-title", "Docker Logs", "-e", "bash", "-c", &script])
-                                        .spawn()
-                                        .is_ok()
+                                            .args(&[
+                                                "-title",
+                                                "Docker Logs",
+                                                "-e",
+                                                "bash",
+                                                "-c",
+                                                &script,
+                                            ])
+                                            .spawn()
+                                            .is_ok()
                                         || Command::new("kitty")
-                                        .args(&["--title", "Docker Logs", "bash", "-c", &script])
-                                        .spawn()
-                                        .is_ok()
+                                            .args(&[
+                                                "--title",
+                                                "Docker Logs",
+                                                "bash",
+                                                "-c",
+                                                &script,
+                                            ])
+                                            .spawn()
+                                            .is_ok()
                                         || Command::new("alacritty")
-                                        .args(&["--title", "Docker Logs", "-e", "bash", "-c", &script])
-                                        .spawn()
-                                        .is_ok();
+                                            .args(&[
+                                                "--title",
+                                                "Docker Logs",
+                                                "-e",
+                                                "bash",
+                                                "-c",
+                                                &script,
+                                            ])
+                                            .spawn()
+                                            .is_ok();
 
                                     if terminal_opened {
                                         app.add_log(
