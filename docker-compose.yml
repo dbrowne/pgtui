@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  av_timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    container_name: ${CONTAINER_NAME:-ts_pg_av_dev}
+    environment:
+      POSTGRES_USER: ${DB_USER:-ts_user}
+      POSTGRES_PASSWORD: ${DB_PASS:-dev_pw}
+      POSTGRES_DB: ${DB_NAME:-sec_master}
+    ports:
+      - "${DB_PORT:-6433}:5432"
+    volumes:
+      - ${PG_DATA_VOLUME:-av_pg_data_dev}:/var/lib/postgresql/data
+      - ${ARCHIVE_VOLUME:-av_archive_dev}:/archive
+    networks:
+      - ${NETWORK_NAME:-av_network_dev}
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin_av_dev
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@admin.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - ${PGADMIN_VOLUME:-av_pgadmin_dev}:/var/lib/pgadmin
+    networks:
+      - ${NETWORK_NAME:-av_network_dev}
+    restart: unless-stopped
+
+networks:
+  av_network_dev:
+    name: ${NETWORK_NAME:-av_network_dev}
+    driver: bridge
+
+volumes:
+  av_pg_data_dev:
+    name: ${PG_DATA_VOLUME:-av_pg_data_dev}
+  av_pgadmin_dev:
+    name: ${PGADMIN_VOLUME:-av_pgadmin_dev}
+  av_archive_dev:
+    name: ${ARCHIVE_VOLUME:-av_archive_dev}
