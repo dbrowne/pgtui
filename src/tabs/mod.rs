@@ -3,8 +3,8 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 
 pub mod actions;
+pub mod logs;
 pub mod status;
-// pub mod logs;
 // pub mod history;
 
 pub trait Tab {
@@ -12,7 +12,7 @@ pub trait Tab {
 }
 
 // Re-export for convenience
+pub use actions::ActionsTab;
+pub use logs::LogsTab;
 pub use status::StatusTab;
-// pub use actions::ActionsTab;
-// pub use logs::LogsTab;
 // pub use history::HistoryTab;

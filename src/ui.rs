@@ -1,11 +1,12 @@
 use crate::tabs::actions::ActionsTab;
+use crate::tabs::logs::LogsTab;
 use crate::tabs::{StatusTab, Tab};
-use crate::{App, AppState, Config, LogLevel, PopupType};
+use crate::{App, AppState, Config, PopupType};
 use chrono::Local;
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::prelude::{Color, Line, Modifier, Span, Style};
-use ratatui::widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Tabs};
+use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Tabs};
 
 pub fn ui(f: &mut Frame, app: &App, config: &Config) {
     let state = app.state.lock().unwrap();
@@ -47,7 +48,7 @@ pub fn ui(f: &mut Frame, app: &App, config: &Config) {
     match state.selected_tab {
         0 => StatusTab::render(f, chunks[1], &state, config),
         1 => ActionsTab::render(f, chunks[1], &state, config),
-        2 => render_logs_tab(f, chunks[1], &state),
+        2 => LogsTab::render(f, chunks[1], &state, config),
         3 => render_history_tab(f, chunks[1], &state),
         _ => {}
     }
@@ -101,45 +102,6 @@ pub fn ui(f: &mut Frame, app: &App, config: &Config) {
     if let Some(ref popup) = state.show_popup {
         render_popup(f, popup);
     }
-}
-
-fn render_logs_tab(f: &mut Frame, area: Rect, state: &AppState) {
-    let logs: Vec<ListItem> = state
-        .logs
-        .iter()
-        .rev()
-        .take(50)
-        .map(|log| {
-            let style = match log.level {
-                LogLevel::Info => Style::default().fg(Color::White),
-                LogLevel::Warning => Style::default().fg(Color::Yellow),
-                LogLevel::Error => Style::default().fg(Color::Red),
-                LogLevel::Success => Style::default().fg(Color::Green),
-            };
-
-            let content = Line::from(vec![
-                Span::styled(
-                    log.timestamp.format("[%H:%M:%S] ").to_string(),
-                    Style::default().fg(Color::Gray),
-                ),
-                Span::styled(
-                    format!("{:?}: ", log.level),
-                    style.add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(&log.message, style),
-            ]);
-
-            ListItem::new(content)
-        })
-        .collect();
-
-    let list = List::new(logs).block(
-        Block::default()
-            .title(" Application Logs ")
-            .borders(Borders::ALL),
-    );
-
-    f.render_widget(list, area);
 }
 
 fn render_history_tab(f: &mut Frame, area: Rect, state: &AppState) {
