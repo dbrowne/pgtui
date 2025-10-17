@@ -1,3 +1,4 @@
+use crate::tabs::actions::ActionsTab;
 use crate::tabs::{StatusTab, Tab};
 use crate::{App, AppState, Config, LogLevel, PopupType};
 use chrono::Local;
@@ -5,6 +6,7 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::prelude::{Color, Line, Modifier, Span, Style};
 use ratatui::widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Tabs};
+
 pub fn ui(f: &mut Frame, app: &App, config: &Config) {
     let state = app.state.lock().unwrap();
 
@@ -44,7 +46,7 @@ pub fn ui(f: &mut Frame, app: &App, config: &Config) {
     // Main content area
     match state.selected_tab {
         0 => StatusTab::render(f, chunks[1], &state, config),
-        1 => render_actions_tab(f, chunks[1], &state),
+        1 => ActionsTab::render(f, chunks[1], &state, config),
         2 => render_logs_tab(f, chunks[1], &state),
         3 => render_history_tab(f, chunks[1], &state),
         _ => {}
@@ -99,66 +101,6 @@ pub fn ui(f: &mut Frame, app: &App, config: &Config) {
     if let Some(ref popup) = state.show_popup {
         render_popup(f, popup);
     }
-}
-
-fn render_actions_tab(f: &mut Frame, area: Rect, state: &AppState) {
-    let actions = vec![
-        (
-            "↑ Start Services",
-            "Start PostgreSQL and PgAdmin containers",
-        ),
-        ("↓ Stop Services", "Stop all running containers"),
-        ("🧹 Clean All", "Remove containers, networks, and volumes"),
-        ("🗑️  Delete Volumes", "Delete all persistent volumes"),
-        (
-            "📚 Generate Docs",
-            "Generate database documentation with SchemaSpy",
-        ),
-        ("🌐 View Docs", "Open database documentation in browser"),
-        ("🔄 Refresh Status", "Refresh all status information"),
-        (
-            "💻 Open PSQL",
-            "Connect to database via psql (opens new terminal)",
-        ),
-        (
-            "📜 View Docker Logs",
-            "View container logs (opens new terminal)",
-        ),
-    ];
-
-    let items: Vec<ListItem> = actions
-        .iter()
-        .enumerate()
-        .map(|(i, (name, desc))| {
-            let content = vec![
-                Line::from(Span::styled(
-                    *name,
-                    if i == state.selected_action {
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                    },
-                )),
-                Line::from(Span::styled(
-                    format!("  {}", desc),
-                    Style::default().fg(Color::Gray),
-                )),
-            ];
-            ListItem::new(content)
-        })
-        .collect();
-
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .title(" Available Actions (Enter to execute, ↑/↓ to navigate) ")
-                .borders(Borders::ALL),
-        )
-        .highlight_style(Style::default().bg(Color::DarkGray));
-
-    f.render_widget(list, area);
 }
 
 fn render_logs_tab(f: &mut Frame, area: Rect, state: &AppState) {

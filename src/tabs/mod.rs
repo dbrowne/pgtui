@@ -2,8 +2,8 @@ use crate::{AppState, Config};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
+pub mod actions;
 pub mod status;
-// pub mod actions;
 // pub mod logs;
 // pub mod history;
 
