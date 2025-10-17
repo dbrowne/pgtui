@@ -1,10 +1,9 @@
-use anyhow::{Context, Result};
-use chrono::Local;
 use crate::setup::Config;
 use crate::structs::*;
+use anyhow::{Context, Result};
+use chrono::Local;
 use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
 use std::{
-    env,
     os::unix::process::ExitStatusExt,
     process::Command,
     sync::{Arc, Mutex},
@@ -15,7 +14,6 @@ pub struct App {
     pub state: Arc<Mutex<AppState>>,
     pub db_pool: Option<Pool<Postgres>>,
 }
-
 
 impl App {
     // Pass config as parameter to methods that need it
@@ -95,7 +93,11 @@ impl App {
         state.last_refresh = Local::now();
     }
 
-    pub async fn fetch_db_status(&self, pool: &Pool<Postgres>, config: &Config) -> Result<DatabaseStatus> {
+    pub async fn fetch_db_status(
+        &self,
+        pool: &Pool<Postgres>,
+        config: &Config,
+    ) -> Result<DatabaseStatus> {
         // Get database size
         let size_query = "SELECT pg_size_pretty(pg_database_size($1))";
         let size: (String,) = sqlx::query_as(size_query)
@@ -441,7 +443,7 @@ impl App {
     pub fn execute_action_async(
         &mut self,
         action: ActionType,
-        config: Config,  // Take ownership for the async task
+        config: Config, // Take ownership for the async task
     ) -> tokio::sync::mpsc::Receiver<ActionProgress> {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let state_clone = self.state.clone();
@@ -538,7 +540,7 @@ impl App {
                         .await;
 
                     // Execute SchemaSpy using tokio::process for async execution
-                    let mut child = tokio::process::Command::new("java")
+                    let child = tokio::process::Command::new("java")
                         .args(&[
                             "-jar",
                             &schemaspy_jar,
